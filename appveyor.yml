@@ -1,0 +1,125 @@
+version: 1.0.{build}
+
+image:
+  - Visual Studio 2022
+  - Ubuntu2004
+  - macOS
+
+matrix:
+  fast_finish: true
+
+for:
+  -
+    matrix:
+      only:
+        - image: Visual Studio 2022
+    build_script:
+      - ps: |
+          $ErrorActionPreference = 'Stop'
+          $version = '2025.04'
+          $build = '01'
+          $archiveName = "rakudo-moar-$version-$build-win-x86_64-msvc.zip"
+          $archive = Join-Path $env:TEMP $archiveName
+          $url = "https://www.rakudo.org/dl/rakudo/$archiveName"
+          $expectedSha256 = '52d1d0e091951dc9c3a75f3e21cb2cf12ec6e2afbb64b3558c2a7343feec3c3d'
+
+          Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $archive
+          $actualSha256 = (Get-FileHash -Path $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualSha256 -ne $expectedSha256) {
+            throw "Rakudo archive SHA-256 mismatch: $actualSha256"
+          }
+
+          $extractPath = Join-Path $env:TEMP 'rakudo-phase0-smoke'
+          Expand-Archive -Path $archive -DestinationPath $extractPath -Force
+          $rakuExe = Get-ChildItem -Path $extractPath -Recurse -File -Filter 'raku.exe' |
+            Where-Object { $_.Directory.Name -eq 'bin' } |
+            Select-Object -First 1
+          if (-not $rakuExe) {
+            throw 'The Rakudo archive did not contain bin/raku.exe'
+          }
+
+          $rakudoRoot = $rakuExe.Directory.Parent.FullName
+          . (Join-Path $rakudoRoot 'scripts\set-env.ps1')
+          raku --version
+          zef --version
+
+          Push-Location (Join-Path $env:APPVEYOR_BUILD_FOLDER 'tools\phase0-smoke')
+          try {
+            zef test .
+            zef install --/update .
+            raku -e 'use RakuDataFrame::Phase0Smoke; die unless smoke-check() == 42; say "installed package smoke passed"'
+            raku -e 'use NativeCall; say "NativeCall available"'
+          }
+          finally {
+            Pop-Location
+          }
+
+  -
+    matrix:
+      only:
+        - image: Ubuntu2004
+    build_script:
+      - sh: |
+          set -euo pipefail
+          version='2025.04'
+          build='01'
+          archive_name="rakudo-moar-$version-$build-linux-x86_64-gcc.tar.gz"
+          archive="$(mktemp)"
+          install_root="$(mktemp -d)"
+          trap 'rm -f "$archive"; rm -rf "$install_root"' EXIT
+
+          curl --fail --location --silent --show-error \
+            "https://www.rakudo.org/dl/rakudo/$archive_name" \
+            --output "$archive"
+          printf '%s  %s\n' \
+            'e86596b6b2cba5bca06ccc269e07db1491ea989a187c756027b85576fb117122' \
+            "$archive" | sha256sum --check --status
+          tar -xzf "$archive" -C "$install_root"
+
+          raku_bin="$(find "$install_root" -type f -path '*/bin/raku' -print -quit)"
+          test -n "$raku_bin"
+          rakudo_root="$(dirname "$(dirname "$raku_bin")")"
+          export PATH="$rakudo_root/bin:$rakudo_root/share/perl6/site/bin:$PATH"
+
+          raku --version
+          zef --version
+          cd "$APPVEYOR_BUILD_FOLDER/tools/phase0-smoke"
+          zef test .
+          zef install --/update .
+          raku -e 'use RakuDataFrame::Phase0Smoke; die unless smoke-check() == 42; say "installed package smoke passed"'
+          raku -e 'use NativeCall; say "NativeCall available"'
+
+  -
+    matrix:
+      only:
+        - image: macOS
+    build_script:
+      - sh: |
+          set -euo pipefail
+          version='2025.04'
+          build='01'
+          archive_name="rakudo-moar-$version-$build-macos-x86_64-clang.tar.gz"
+          archive="$(mktemp)"
+          install_root="$(mktemp -d)"
+          trap 'rm -f "$archive"; rm -rf "$install_root"' EXIT
+
+          curl --fail --location --silent --show-error \
+            "https://www.rakudo.org/dl/rakudo/$archive_name" \
+            --output "$archive"
+          printf '%s  %s\n' \
+            'cb1e0a28f193cbcec22c3d0d49faa0854ee38e11c4e1c7c0b3a9c7fb6689acf4' \
+            "$archive" | shasum -a 256 -c
+          tar -xzf "$archive" -C "$install_root"
+
+          raku_bin="$(find "$install_root" -type f -path '*/bin/raku' -print -quit)"
+          test -n "$raku_bin"
+          rakudo_root="$(dirname "$(dirname "$raku_bin")")"
+          export PATH="$rakudo_root/bin:$rakudo_root/share/perl6/site/bin:$PATH"
+
+          raku --version
+          zef --version
+          cd "$APPVEYOR_BUILD_FOLDER/tools/phase0-smoke"
+          zef test .
+          zef install --/update .
+          raku -e 'use RakuDataFrame::Phase0Smoke; die unless smoke-check() == 42; say "installed package smoke passed"'
+          raku -e 'use NativeCall; say "NativeCall available"'
